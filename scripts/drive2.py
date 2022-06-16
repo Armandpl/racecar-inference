@@ -15,6 +15,8 @@ from simple_pid import PID
 import serial
 
 from threading import Thread
+
+from utils.moving_average import MovingAverage
 # import line_profiler
 # import atexit
 # profile = line_profiler.LineProfiler()
@@ -43,14 +45,14 @@ def speed_policy(output, config):
 
     steering = x * float(config["model"]["steering_gain"])
 
-    if abs(x) > float(config["pid"]["steering_threshold"]):
-        speed = turn_speed
-    else:
-        speed = straight_speed
+    # if abs(x) > float(config["pid"]["steering_threshold"]):
+    #     speed = turn_speed
+    # else:
+    #     speed = straight_speed
 
-    # throttle = min_speed + (max_speed-min_speed) * (1-abs(steering))
+    target_speed = turn_speed + (straight_speed-turn_speed) * (1-abs(x))
 
-    return float(steering), float(speed)
+    return float(steering), float(target_speed)
 
 
 policies = {
@@ -86,6 +88,7 @@ def main():
 
     global last_read_speed
     last_read_speed = 0.0
+    moving_average = MovingAverage(horizon=int(config["pid"]["moving_average_horizon"]))
 
     def receive_speed(ser):
         global last_read_speed
@@ -128,14 +131,6 @@ def main():
                 car.steering, car.throttle = policies[config["model"]["policy"]](output, config)
             elif config["model"]["policy"] == "speed_policy":
                 steering, target_speed = policies[config["model"]["policy"]](output, config)
-                # try:
-                #     line = ser.readline()   # read a '\n' terminated line
-                #     speed = float(line.decode("utf-8"))
-                # except Exception as e:
-                #     speed = None
-                #     print(e)
-                #     print("Error reading speed, setting fallback throttle")
-                #     throttle = float(config["pid"]["fallback_throttle"])
 
                 # TODO remove
                 global counter
@@ -147,18 +142,22 @@ def main():
 
                 counter += 1
 
-                target_speed = turn_speed * flag + (not flag) * straight_speed
+                # target_speed = turn_speed * flag + (not flag) * straight_speed
                 ###
 
-                speed_pid.setpoint = target_speed
-                throttle = speed_pid(last_read_speed)
+                if last_read_speed is not None:
+                    averaged_speed = moving_average(last_read_speed)
+                    speed_pid.setpoint = target_speed
+                    throttle = speed_pid(averaged_speed)
+                else:
+                    throttle = float(config["pid"]["fallback_throttle"])
 
                 # TODO remove
                 speeds.pop(0)
                 throttles.pop(0)
                 targets.pop(0)
 
-                speeds.append(last_read_speed)
+                speeds.append(averaged_speed)
                 throttles.append(throttle)
                 targets.append(target_speed)
                 ### 
@@ -180,6 +179,7 @@ def main():
             speed_PID = PID(0, 0, 0)
             speed_PID.setpoint = 0
             setup_pid(config, speed_pid)
+            moving_average = MovingAverage(horizon=int(config["pid"]["moving_average_horizon"]))
             time.sleep(1)
 
             # plot
@@ -198,7 +198,7 @@ def main():
                 targets = [0]*500
             #######
 
-            input("\nPress enter to start driving")
+            # input("\nPress enter to start driving")
 
             camera.running = True
 
