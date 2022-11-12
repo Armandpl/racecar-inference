@@ -15,14 +15,14 @@ def main(args):
     model_trt.cuda()
     model_trt.eval()
 
-    data = torch.ones((1, 224, 224, 3))
+    data = torch.ones((1, 112, 112, 3))
 
     # warmup gpu
     for _ in range(2):
         torch.zeros(1000).cuda()
 
-    for _ in range(200):
-        model_trt(data.cuda().half())
+    for _ in range(500):
+        out = model_trt(data.cuda().half())
 
 def parse_args():
     parser = argparse.ArgumentParser()

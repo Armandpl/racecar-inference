@@ -45,12 +45,10 @@ def speed_policy(output, config):
 
     steering = x * float(config["model"]["steering_gain"])
 
-    # if abs(x) > float(config["pid"]["steering_threshold"]):
-    #     speed = turn_speed
-    # else:
-    #     speed = straight_speed
-
-    target_speed = turn_speed + (straight_speed-turn_speed) * (1-abs(x))
+    if abs(x) < float(config["pid"]["dead_zone"]):
+        target_speed = straight_speed
+    else:
+        target_speed = turn_speed + (straight_speed-turn_speed) * (1-abs(x))
 
     return float(steering), float(target_speed)
 
@@ -80,7 +78,19 @@ def main():
     for _ in range(2):
         torch.zeros(1000).cuda()
 
-    camera = CSICamera(width=224, height=224, capture_fps=int(config["model"]["fps"]))
+    camera = CSICamera(
+        width=int(config["model"]["img_size"]), 
+        height=int(config["model"]["img_size"]), 
+        capture_fps=int(config["model"]["fps"]),
+        capture_device=int(config["model"]["road_cam"])
+    )
+
+    # ceiling_cam = CSICamera(
+    #     width=int(config["model"]["img_size"]), 
+    #     height=int(config["model"]["img_size"]), 
+    #     capture_fps=int(config["model"]["fps"]),
+    #     capture_device=int(config["model"]["ceiling_cam"])
+    # )
 
     ser_device = config["serial"]["device"]
     ser_baudrate = int(config["serial"]["baudrate"])
@@ -111,15 +121,6 @@ def main():
     # GPIO.setmode(GPIO.BOARD)  # BCM pin-numbering scheme from Raspberry Pi
     GPIO.setup(input_pin, GPIO.IN)  # set pin as an input pin
 
-    # TODO remove
-    speeds = [0]*500
-    throttles = [0]*500
-    targets = [0]*500
-    global counter
-    global flag
-    counter = 0
-    flag = 0
-    ## 
     try:
         def handle_image_callback(change):
             # global last_read_speed
@@ -132,16 +133,6 @@ def main():
             elif config["model"]["policy"] == "speed_policy":
                 steering, target_speed = policies[config["model"]["policy"]](output, config)
 
-                # TODO remove
-                global counter
-                global flag
-                turn_speed = float(config["pid"]["turn_speed"])
-                straight_speed = float(config["pid"]["straight_speed"])
-                if counter % 100 == 0:
-                    flag = not flag
-
-                counter += 1
-
                 # target_speed = turn_speed * flag + (not flag) * straight_speed
                 ###
 
@@ -152,22 +143,19 @@ def main():
                 else:
                     throttle = float(config["pid"]["fallback_throttle"])
 
-                # TODO remove
-                speeds.pop(0)
-                throttles.pop(0)
-                targets.pop(0)
-
-                speeds.append(averaged_speed)
-                throttles.append(throttle)
-                targets.append(target_speed)
-                ### 
-                
                 car.steering, car.throttle = steering, throttle
             else:
                 print("wrong policy name")
                 time.sleep(1)
+        
+        # def handle_ceiling_callback(change):
+        #     # save ceiling image to mcap
+
+        #     # might as well read the IMU here
+        #     pass
 
         camera.observe(handle_image_callback, names='value')
+        # ceiling_cam.observe(handle_ceiling_callback, names='value')
 
         while True:
             print("Reloading config\n")
@@ -182,25 +170,8 @@ def main():
             moving_average = MovingAverage(horizon=int(config["pid"]["moving_average_horizon"]))
             time.sleep(1)
 
-            # plot
-            # TODO remove
-            if len(speeds) > 0:
-                print("plotting")
-                counter = 0
-                speeds = np.array(speeds)
-                throttles = np.array(throttles)
-                targets = np.array(targets)
-                telemetry = np.stack([speeds, throttles, targets], axis=0)
-                np.save('telemetry.npy', telemetry)
-
-                speeds = [0]*500
-                throttles = [0]*500
-                targets = [0]*500
-            #######
-
-            # input("\nPress enter to start driving")
-
             camera.running = True
+            # ceiling_cam.running = True
 
             print("skrrrrt")
             
@@ -210,6 +181,7 @@ def main():
                 if value != prev_value:
                     if value == GPIO.LOW:
                         camera.running = False
+                        # ceiling_cam.running = False
                         break
                 time.sleep(1)
 

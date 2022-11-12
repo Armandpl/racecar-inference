@@ -1,0 +1,4 @@
+sudo systemctl restart nvargus-daemon
+
+https://forums.developer.nvidia.com/t/pyserial-to-use-uart-with-wrong-permision-denied-dev-ttyths1/84206
+dmesg | grep tty

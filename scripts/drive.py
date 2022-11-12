@@ -8,7 +8,7 @@ from torch2trt import TRTModule
 from torchvision import transforms
 
 import numpy as np
-
+import time
 # import line_profiler
 # import atexit
 # profile = line_profiler.LineProfiler()
@@ -18,32 +18,40 @@ import numpy as np
 def steering_only(output, config):
     x, y = output
 
+    max_speed = float(config["model"]["max_speed"])
+    min_speed = float(config["model"]["min_speed"])
+
     steering = x * float(config["model"]["steering_gain"])
-    throttle = float(config["model"]["max_speed"])
+    throttle = min_speed + (max_speed-min_speed) * (1-abs(steering))
 
     return float(steering), float(throttle)
 
 
 def e2e(output, config):
     throttle, steering = output
-    throttle = throttle.numpy()
+    throttle = float(throttle)
+    steering = float(steering)
 
     steering = steering * float(config["model"]["steering_gain"])
 
     t = throttle * float(config["model"]["max_speed"])
     accel = throttle > 0
-    brake = np.invert(accel)
+    brake = not accel
     throttle = accel * t + brake * throttle
 
     return float(steering), float(throttle)
 
 
 def boost(output, config):
-    throttle, steering = output
-    throttle = throttle.numpy()
+    steering, throttle = output
+    throttle = float(throttle)
+    steering = -float(steering)
 
-    throttle = np.max(0, throttle)
-    throttle = throttle * float(config["model"]["max_speed"]) + float(config["model"]["min_speed"])
+    max_speed = float(config["model"]["max_speed"])
+    min_speed = float(config["model"]["min_speed"])
+
+    throttle = max(0, throttle)
+    throttle = throttle * (max_speed-min_speed) + min_speed
 
     return float(steering), float(throttle)
 
@@ -68,8 +76,8 @@ def main():
     setup_car(config, car)
 
     # warmup gpu
-    for _ in range(2):
-        torch.zeros(1000).cuda()
+    # for _ in range(2):
+    #     torch.zeros(1000).to(torch.device('cuda'))
 
     camera = CSICamera(width=224, height=224, capture_fps=int(config["model"]["fps"]))
 
@@ -93,8 +101,9 @@ def load_model(path):
     return model_trt
 
 
-mean = torch.Tensor([0.485, 0.456, 0.406]).cuda()
-std = torch.Tensor([0.229, 0.224, 0.225]).cuda()
+# takes up the whole RAM if not commented very weird
+# mean = torch.Tensor([0.485, 0.456, 0.406]).cuda()
+# std = torch.Tensor([0.229, 0.224, 0.225]).cuda()
 
 
 def preprocess(image):
